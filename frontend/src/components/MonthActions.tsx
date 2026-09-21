@@ -4,10 +4,15 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { useGenerateFromRecurring, useCopyMonth } from '@/hooks/useRecurring';
 import { formatMonthYear } from '@/lib/format';
+// setFeedback ya no se usa: los toasts de sonner los cubre useGenerateFromRecurring/useCopyMonth
 
 interface MonthActionsProps {
   year: number;
   month: number;
+  /** Muestra el botón "Generar fijos" solo si el usuario tiene fijos configurados. */
+  showGenerate?: boolean;
+  /** Muestra el botón "Copiar mes anterior" solo si el mes anterior tiene data. */
+  showCopy?: boolean;
 }
 
 function prevMonth(year: number, month: number): { year: number; month: number } {
@@ -15,10 +20,14 @@ function prevMonth(year: number, month: number): { year: number; month: number }
   return { year, month: month - 1 };
 }
 
-export function MonthActions({ year, month }: MonthActionsProps) {
+export function MonthActions({
+  year,
+  month,
+  showGenerate = true,
+  showCopy = true,
+}: MonthActionsProps) {
   const [confirmGenerate, setConfirmGenerate] = useState(false);
   const [confirmCopy, setConfirmCopy] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
 
   const generateMut = useGenerateFromRecurring();
   const copyMut = useCopyMonth();
@@ -26,39 +35,35 @@ export function MonthActions({ year, month }: MonthActionsProps) {
   const from = prevMonth(year, month);
 
   const handleGenerate = async () => {
-    const res = await generateMut.mutateAsync({ year, month });
+    await generateMut.mutateAsync({ year, month });
     setConfirmGenerate(false);
-    setFeedback(
-      `Se generaron ${res.createdCount} movimientos desde tus fijos (${res.skippedCount} ya existían).`
-    );
   };
 
   const handleCopy = async () => {
-    const res = await copyMut.mutateAsync({ from, to: { year, month } });
+    await copyMut.mutateAsync({ from, to: { year, month } });
     setConfirmCopy(false);
-    setFeedback(
-      `Se copiaron ${res.createdCount} movimientos desde ${formatMonthYear(from.year, from.month)}.`
-    );
   };
+
+  if (!showGenerate && !showCopy) return null;
+
+  const gridCols = showGenerate && showCopy ? 'grid-cols-2' : 'grid-cols-1';
 
   return (
     <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-2">
-        <Button variant="secondary" size="sm" onClick={() => setConfirmGenerate(true)}>
-          <CalendarPlus size={14} />
-          Generar fijos
-        </Button>
-        <Button variant="secondary" size="sm" onClick={() => setConfirmCopy(true)}>
-          <Copy size={14} />
-          Copiar mes anterior
-        </Button>
+      <div className={`grid ${gridCols} gap-2`}>
+        {showGenerate && (
+          <Button variant="secondary" size="sm" onClick={() => setConfirmGenerate(true)}>
+            <CalendarPlus size={14} />
+            Generar fijos
+          </Button>
+        )}
+        {showCopy && (
+          <Button variant="secondary" size="sm" onClick={() => setConfirmCopy(true)}>
+            <Copy size={14} />
+            Copiar mes anterior
+          </Button>
+        )}
       </div>
-
-      {feedback && (
-        <p className="text-xs text-emerald-600 dark:text-emerald-400 text-center">
-          {feedback}
-        </p>
-      )}
 
       <ConfirmDialog
         open={confirmGenerate}

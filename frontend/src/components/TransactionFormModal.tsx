@@ -12,12 +12,15 @@ interface TransactionFormModalProps {
   onClose: () => void;
   /** Si viene, es modo edición. */
   transaction?: Transaction | null;
+  /** Si viene, el movimiento se asocia al hogar en vez de personal. */
+  householdId?: string | null;
 }
 
 export function TransactionFormModal({
   open,
   onClose,
   transaction,
+  householdId,
 }: TransactionFormModalProps) {
   const createMut = useCreateTransaction();
   const updateMut = useUpdateTransaction();
@@ -32,6 +35,10 @@ export function TransactionFormModal({
         description: values.description,
         date: new Date(values.date).toISOString(),
         currency: values.currency,
+        arsAmount: values.arsAmount,
+        exchangeRate: values.exchangeRate,
+        rateSource: values.rateSource,
+        householdId: householdId ?? transaction?.householdId ?? null,
       };
       if (isEdit && transaction) {
         await updateMut.mutateAsync({ id: transaction._id, input: payload });
@@ -40,17 +47,17 @@ export function TransactionFormModal({
       }
       onClose();
     } catch (err) {
-      // El error queda en el hook; podríamos mostrar un toast. Por ahora silent.
       console.error(err);
     }
   };
 
+  const titlePrefix = householdId ? 'del hogar' : '';
+  const title = isEdit
+    ? `Editar movimiento ${titlePrefix}`.trim()
+    : `Nuevo movimiento ${titlePrefix}`.trim();
+
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={isEdit ? 'Editar movimiento' : 'Nuevo movimiento'}
-    >
+    <Modal open={open} onClose={onClose} title={title}>
       <TransactionForm
         initial={transaction ? transactionToFormValues(transaction) : undefined}
         submitting={createMut.isPending || updateMut.isPending}

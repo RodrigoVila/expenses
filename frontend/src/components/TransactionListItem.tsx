@@ -46,6 +46,11 @@ export function TransactionListItem({ tx, onEdit, onDelete }: TransactionListIte
           {isExpense ? '-' : '+'}
           {formatMoney(tx.amount, tx.currency)}
         </div>
+        {tx.currency === 'USD' && tx.arsAmount > 0 && (
+          <div className="text-[10px] text-slate-500">
+            ≈ {formatMoney(tx.arsAmount, 'ARS')}
+          </div>
+        )}
         {(onEdit || onDelete) && (
           <div className="flex justify-end gap-1 mt-1">
             {onEdit && (

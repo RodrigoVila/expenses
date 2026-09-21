@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/Button';
 import { CategoryPicker } from '@/components/CategoryPicker';
 import { UsdConversion } from '@/components/UsdConversion';
 import { useRecentDescriptions } from '@/hooks/useTransactions';
+import { useDolarPref } from '@/hooks/useDolarPref';
+import { useDolarRate } from '@/hooks/useDolarRate';
 import { cn } from '@/lib/cn';
 import type { Currency, Transaction, TransactionType } from '@/lib/types';
 
@@ -15,6 +17,9 @@ export interface TransactionFormValues {
   description: string;
   date: string; // YYYY-MM-DD
   currency: Currency;
+  arsAmount: number;
+  exchangeRate: number | null;
+  rateSource: string | null;
 }
 
 interface TransactionFormProps {
@@ -45,6 +50,11 @@ export function TransactionForm({
   const { data: recentDescriptions = [] } = useRecentDescriptions(type);
   const datalistId = useId();
 
+  // Cotización actual del tipo de dólar preferido — se usa al submit para
+  // snapshottear arsAmount cuando el movimiento es en USD.
+  const [dolarType] = useDolarPref();
+  const dolar = useDolarRate(dolarType);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -57,6 +67,21 @@ export function TransactionForm({
       setError('Elegí una categoría');
       return;
     }
+
+    // Snapshot de la cotización para USD
+    let arsAmount = parsedAmount;
+    let exchangeRate: number | null = null;
+    let rateSource: string | null = null;
+    if (currency === 'USD') {
+      if (!dolar.data) {
+        setError('No se pudo obtener la cotización del dólar. Intentá de nuevo en unos segundos.');
+        return;
+      }
+      exchangeRate = dolar.data.venta;
+      rateSource = dolarType;
+      arsAmount = parsedAmount * exchangeRate;
+    }
+
     onSubmit({
       amount: parsedAmount,
       type,
@@ -64,6 +89,9 @@ export function TransactionForm({
       description: description.trim(),
       date,
       currency,
+      arsAmount,
+      exchangeRate,
+      rateSource,
     });
   };
 
@@ -193,5 +221,8 @@ export function transactionToFormValues(tx: Transaction): TransactionFormValues 
     description: tx.description,
     date: tx.date.slice(0, 10),
     currency: tx.currency,
+    arsAmount: tx.arsAmount,
+    exchangeRate: tx.exchangeRate,
+    rateSource: tx.rateSource,
   };
 }

@@ -21,6 +21,42 @@ export interface AuthResponse {
   created: boolean;
 }
 
+export interface HouseholdMember {
+  _id: string;
+  email: string;
+  name: string;
+  picture: string | null;
+}
+
+export interface Household {
+  _id: string;
+  name: string;
+  ownerId: string;
+  memberIds: string[];
+  members: HouseholdMember[];
+  isOwner: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type NotificationType = 'household-invite';
+
+export interface Notification {
+  _id: string;
+  userId: string;
+  type: NotificationType;
+  payload: {
+    inviteId?: string;
+    householdId?: string;
+    householdName?: string;
+    invitedByName?: string;
+    invitedByEmail?: string;
+  };
+  readAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Category {
   _id: string;
   name: string;
@@ -54,7 +90,12 @@ export interface Transaction {
   description: string;
   date: string;
   currency: Currency;
+  arsAmount: number;
+  exchangeRate: number | null;
+  rateSource: string | null;
   recurringId: string | null;
+  /** Si está seteado pertenece a un hogar; sino es personal. */
+  householdId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,6 +111,7 @@ export interface RecurringTransaction {
   isActive: boolean;
   startDate: string;
   endDate: string | null;
+  householdId: string | null;
   createdAt: string;
   updatedAt: string;
 }

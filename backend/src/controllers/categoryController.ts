@@ -43,7 +43,14 @@ export const categoryController = {
 
   update: asyncHandler(async (req: Request, res: Response) => {
     const data = updateSchema.parse(req.body);
-    const category = await categoryService.update(req.userId!, req.params.id, data);
+    const user = await User.findById(req.userId!);
+    if (!user) throw new HttpError(401, 'Usuario no encontrado');
+    const category = await categoryService.update(
+      req.userId!,
+      req.params.id,
+      data,
+      user.isAdmin
+    );
     res.json(category);
   }),
 

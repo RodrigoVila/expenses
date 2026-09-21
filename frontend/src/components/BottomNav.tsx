@@ -1,12 +1,13 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, List, BarChart3, Tag, Repeat } from 'lucide-react';
+import { LayoutDashboard, List, BarChart3, Tag, Repeat, Home } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 const items = [
   { to: '/', label: 'Inicio', icon: LayoutDashboard, end: true },
-  { to: '/movimientos', label: 'Movimientos', icon: List },
+  { to: '/movimientos', label: 'Movs', icon: List },
   { to: '/anual', label: 'Anual', icon: BarChart3 },
-  { to: '/categorias', label: 'Categorías', icon: Tag },
+  { to: '/hogar', label: 'Hogar', icon: Home },
+  { to: '/categorias', label: 'Cats', icon: Tag },
   { to: '/fijos', label: 'Fijos', icon: Repeat },
 ];
 
@@ -18,7 +19,7 @@ export function BottomNav() {
                  dark:bg-slate-950/95 dark:border-slate-800
                  pb-[env(safe-area-inset-bottom)]"
     >
-      <ul className="mx-auto max-w-md grid grid-cols-5">
+      <ul className="mx-auto max-w-md grid grid-cols-6">
         {items.map(({ to, label, icon: Icon, end }) => (
           <li key={to}>
             <NavLink

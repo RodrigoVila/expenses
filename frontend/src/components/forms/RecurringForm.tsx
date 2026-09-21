@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { Button } from '@/components/ui/Button';
-import { InfoTooltip } from '@/components/ui/InfoTooltip';
 import { CategoryPicker } from '@/components/CategoryPicker';
 import { UsdConversion } from '@/components/UsdConversion';
 import { cn } from '@/lib/cn';
@@ -31,6 +30,7 @@ export function RecurringForm({
   onSubmit,
   onCancel,
 }: RecurringFormProps) {
+  const isEdit = initial !== undefined;
   const [type, setType] = useState<TransactionType>(initial?.type ?? 'expense');
   const [amount, setAmount] = useState(initial?.amount?.toString() ?? '');
   const [categoryId, setCategoryId] = useState(initial?.categoryId ?? '');
@@ -116,16 +116,22 @@ export function RecurringForm({
         hint="Cuándo cae cada mes (1 = primer día). Si el mes no tiene ese día, cae al último."
       />
 
-      <label className="flex items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          checked={isActive}
-          onChange={(e) => setIsActive(e.target.checked)}
-          className="w-4 h-4"
-        />
-        Activo
-        <InfoTooltip text="Si está activo, se genera con 'Generar fijos'. Pausalo para saltearlo sin borrarlo." />
-      </label>
+      {isEdit && (
+        <label className="flex items-center gap-2 text-sm p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800">
+          <input
+            type="checkbox"
+            checked={!isActive}
+            onChange={(e) => setIsActive(!e.target.checked)}
+            className="w-4 h-4"
+          />
+          <span>
+            Pausar este fijo
+            <span className="block text-xs text-slate-500 font-normal">
+              No se va a generar al presionar "Generar fijos" hasta que lo reactives.
+            </span>
+          </span>
+        </label>
+      )}
 
       {error && <p className="text-sm text-red-600">{error}</p>}
 

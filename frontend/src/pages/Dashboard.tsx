@@ -1,6 +1,9 @@
 import { useCurrentMonth } from '@/hooks/useCurrentMonth';
 import { useSummaryComparison } from '@/hooks/useTransactions';
 import { useBudgetProgress } from '@/hooks/useCategories';
+import { useRecurring } from '@/hooks/useRecurring';
+import { useDolarPref } from '@/hooks/useDolarPref';
+import { useDolarRate } from '@/hooks/useDolarRate';
 import { MonthPicker } from '@/components/MonthPicker';
 import { MonthActions } from '@/components/MonthActions';
 import { CategoryIcon } from '@/components/CategoryIcon';
@@ -9,7 +12,7 @@ import { ComparisonChip } from '@/components/ComparisonChip';
 import { BudgetProgressList } from '@/components/BudgetProgressList';
 import { formatMoney } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { TrendingUp, TrendingDown, Wallet } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, ArrowDown, Sparkles } from 'lucide-react';
 import type { CategoryDelta } from '@/lib/types';
 
 function prevMonth(year: number, month: number): { year: number; month: number } {
@@ -19,14 +22,38 @@ function prevMonth(year: number, month: number): { year: number; month: number }
 
 export function Dashboard() {
   const { year, month, prev, next } = useCurrentMonth();
-  const { data, isLoading } = useSummaryComparison(year, month, 'ARS');
+  const { data, isLoading } = useSummaryComparison(year, month);
   const { data: budgets = [] } = useBudgetProgress(year, month, 'ARS');
+  const { data: recurring = [] } = useRecurring();
+  const [dolarType] = useDolarPref();
+  const dolar = useDolarRate(dolarType);
 
   const current = data?.current;
   const previous = data?.previous;
   const categoryDeltas = data?.categoryDeltas ?? [];
 
   const pv = prevMonth(year, month);
+
+  // Equivalente en USD del balance/gastos/ingresos usando la cotización actual
+  const usdRate = dolar.data?.venta;
+  const balanceUsd = current && usdRate ? current.balance / usdRate : null;
+  const expenseUsd = current && usdRate ? current.totalExpense / usdRate : null;
+  const incomeUsd = current && usdRate ? current.totalIncome / usdRate : null;
+
+  const isEmptyMonth = !isLoading && current?.count === 0;
+  const isFirstTime = isEmptyMonth && (previous?.count ?? 0) === 0;
+  const hasRecurring = recurring.length > 0;
+  const hasPrevData = (previous?.count ?? 0) > 0;
+
+  // Empty state para primer uso
+  if (isFirstTime && !hasRecurring) {
+    return (
+      <div className="space-y-6">
+        <MonthPicker year={year} month={month} onPrev={prev} onNext={next} />
+        <FirstTimeWelcome />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -41,6 +68,11 @@ export function Dashboard() {
         <div className="text-3xl font-bold">
           {formatMoney(current?.balance ?? 0, 'ARS')}
         </div>
+        {balanceUsd !== null && (
+          <div className="text-sm text-brand-100 mt-0.5">
+            ≈ {formatMoney(balanceUsd, 'USD')} <span className="opacity-70">(dólar {dolarType})</span>
+          </div>
+        )}
 
         <div className="mt-2">
           {current && previous && (
@@ -59,19 +91,28 @@ export function Dashboard() {
           <StatMini
             label="Ingresos"
             amount={current?.totalIncome ?? 0}
+            usdAmount={incomeUsd}
             icon={<TrendingUp size={14} />}
             positive
           />
           <StatMini
             label="Gastos"
             amount={current?.totalExpense ?? 0}
+            usdAmount={expenseUsd}
             icon={<TrendingDown size={14} />}
           />
         </div>
       </div>
 
-      {/* Acciones rápidas de mes */}
-      <MonthActions year={year} month={month} />
+      {/* Acciones rápidas de mes — solo si tiene sentido mostrarlas */}
+      {(hasRecurring || hasPrevData) && (
+        <MonthActions
+          year={year}
+          month={month}
+          showGenerate={hasRecurring}
+          showCopy={hasPrevData}
+        />
+      )}
 
       {/* Presupuestos del mes */}
       {budgets.length > 0 && (
@@ -130,11 +171,13 @@ export function Dashboard() {
 function StatMini({
   label,
   amount,
+  usdAmount,
   icon,
   positive,
 }: {
   label: string;
   amount: number;
+  usdAmount?: number | null;
   icon: React.ReactNode;
   positive?: boolean;
 }) {
@@ -147,6 +190,9 @@ function StatMini({
       <div className={cn('text-lg font-semibold mt-0.5', positive && 'text-emerald-200')}>
         {formatMoney(amount, 'ARS')}
       </div>
+      {usdAmount != null && (
+        <div className="text-[10px] text-brand-100/80">≈ {formatMoney(usdAmount, 'USD')}</div>
+      )}
     </div>
   );
 }
@@ -209,6 +255,40 @@ function EmptyBreakdown() {
   return (
     <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center text-sm text-slate-500">
       Aún no hay gastos en este mes.
+    </div>
+  );
+}
+
+function FirstTimeWelcome() {
+  return (
+    <div className="rounded-2xl bg-gradient-to-br from-brand-600 to-brand-700 text-white p-6 shadow-lg space-y-4">
+      <div className="flex items-center gap-2">
+        <Sparkles size={20} />
+        <h2 className="text-xl font-bold">¡Bienvenido a Expenses!</h2>
+      </div>
+      <p className="text-sm text-brand-100">
+        Empezá cargando tu primer movimiento. Tocá el botón <b>+</b> abajo a la derecha para
+        registrar un ingreso o gasto.
+      </p>
+      <div className="text-sm text-brand-100 space-y-1">
+        <div className="flex items-start gap-2">
+          <span className="text-brand-200">•</span>
+          <span>
+            Con el <b>+</b> también podés crear <b>fijos</b> (alquiler, sueldo, Netflix) que se
+            repiten cada mes.
+          </span>
+        </div>
+        <div className="flex items-start gap-2">
+          <span className="text-brand-200">•</span>
+          <span>
+            En <b>Categorías</b> podés ajustar íconos, colores y presupuestos mensuales.
+          </span>
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-2 text-brand-100 pt-2">
+        <span className="text-xs">Empezá acá</span>
+        <ArrowDown size={16} className="animate-bounce" />
+      </div>
     </div>
   );
 }

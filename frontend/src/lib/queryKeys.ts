@@ -4,6 +4,15 @@
  */
 
 export const qk = {
+  households: {
+    all: ['households'] as const,
+    list: ['households', 'list'] as const,
+  },
+  notifications: {
+    all: ['notifications'] as const,
+    list: (onlyUnread = false) => ['notifications', 'list', { onlyUnread }] as const,
+    unreadCount: ['notifications', 'unread-count'] as const,
+  },
   categories: {
     all: ['categories'] as const,
     list: (includeArchived = false) => ['categories', { includeArchived }] as const,

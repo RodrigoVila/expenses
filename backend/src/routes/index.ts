@@ -4,6 +4,8 @@ import transactionRoutes from './transactionRoutes';
 import recurringRoutes from './recurringRoutes';
 import monthBootstrapRoutes from './monthBootstrapRoutes';
 import authRoutes from './authRoutes';
+import householdRoutes from './householdRoutes';
+import notificationRoutes from './notificationRoutes';
 import { requireAuth } from '../middleware/requireAuth';
 
 const router = Router();
@@ -19,5 +21,7 @@ router.use('/categories', requireAuth, categoryRoutes);
 router.use('/transactions', requireAuth, transactionRoutes);
 router.use('/recurring', requireAuth, recurringRoutes);
 router.use('/months', requireAuth, monthBootstrapRoutes);
+router.use('/households', requireAuth, householdRoutes);
+router.use('/notifications', requireAuth, notificationRoutes);
 
 export default router;

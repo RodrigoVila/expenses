@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, type QueryParams } from '@/lib/api';
+import { toast } from 'sonner';
+import { api, ApiError, type QueryParams } from '@/lib/api';
 import { qk } from '@/lib/queryKeys';
+
+function toastError(err: unknown, fallback: string) {
+  const msg = err instanceof ApiError ? err.message : fallback;
+  toast.error(msg);
+}
 import type {
   CategoryBreakdown,
   Currency,
@@ -17,6 +23,7 @@ export type TransactionListFilters = {
   type?: TransactionType;
   categoryId?: string;
   currency?: Currency;
+  householdId?: string;
 };
 
 export interface CreateTransactionInput {
@@ -26,6 +33,10 @@ export interface CreateTransactionInput {
   description?: string;
   date: string; // ISO
   currency?: Currency;
+  arsAmount: number;
+  exchangeRate?: number | null;
+  rateSource?: string | null;
+  householdId?: string | null;
 }
 
 export function useTransactions(filters: TransactionListFilters = {}) {
@@ -37,11 +48,11 @@ export function useTransactions(filters: TransactionListFilters = {}) {
   });
 }
 
-export function useMonthSummary(year: number, month: number) {
+export function useMonthSummary(year: number, month: number, householdId?: string) {
   return useQuery({
-    queryKey: qk.transactions.summary(year, month),
+    queryKey: [...qk.transactions.summary(year, month), { householdId }] as const,
     queryFn: ({ signal }) =>
-      api.get<MonthSummary[]>('/transactions/summary', { year, month }, signal),
+      api.get<MonthSummary>('/transactions/summary', { year, month, householdId }, signal),
     staleTime: 30_000,
   });
 }
@@ -50,31 +61,27 @@ export function useCategoryBreakdown(
   year: number,
   month: number,
   type: TransactionType = 'expense',
-  currency: Currency = 'ARS'
+  householdId?: string
 ) {
   return useQuery({
-    queryKey: qk.transactions.byCategory(year, month, type, currency),
+    queryKey: [...qk.transactions.byCategory(year, month, type, 'ARS'), { householdId }] as const,
     queryFn: ({ signal }) =>
       api.get<CategoryBreakdown[]>(
         '/transactions/by-category',
-        { year, month, type, currency },
+        { year, month, type, householdId },
         signal
       ),
     staleTime: 30_000,
   });
 }
 
-export function useSummaryComparison(
-  year: number,
-  month: number,
-  currency: Currency = 'ARS'
-) {
+export function useSummaryComparison(year: number, month: number, householdId?: string) {
   return useQuery({
-    queryKey: qk.transactions.comparison(year, month, currency),
+    queryKey: [...qk.transactions.comparison(year, month, 'ARS'), { householdId }] as const,
     queryFn: ({ signal }) =>
       api.get<SummaryComparison>(
         '/transactions/summary-comparison',
-        { year, month, currency },
+        { year, month, householdId },
         signal
       ),
     staleTime: 30_000,
@@ -99,11 +106,11 @@ export function useRecentDescriptions(type?: TransactionType) {
   });
 }
 
-export function useYearlySummary(year: number, currency: Currency = 'ARS') {
+export function useYearlySummary(year: number) {
   return useQuery({
-    queryKey: qk.transactions.yearly(year, currency),
+    queryKey: qk.transactions.yearly(year, 'ARS'),
     queryFn: ({ signal }) =>
-      api.get<YearlyMonth[]>('/transactions/yearly-summary', { year, currency }, signal),
+      api.get<YearlyMonth[]>('/transactions/yearly-summary', { year }, signal),
     staleTime: 60_000,
   });
 }
@@ -113,7 +120,12 @@ export function useCreateTransaction() {
   return useMutation({
     mutationFn: (input: CreateTransactionInput) =>
       api.post<Transaction>('/transactions', input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.transactions.all }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.transactions.all });
+      qc.invalidateQueries({ queryKey: qk.categories.all });
+      toast.success('Movimiento guardado');
+    },
+    onError: (err) => toastError(err, 'No se pudo guardar el movimiento'),
   });
 }
 
@@ -122,14 +134,29 @@ export function useUpdateTransaction() {
   return useMutation({
     mutationFn: ({ id, input }: { id: string; input: Partial<CreateTransactionInput> }) =>
       api.patch<Transaction>(`/transactions/${id}`, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.transactions.all }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.transactions.all });
+      qc.invalidateQueries({ queryKey: qk.categories.all });
+      toast.success('Movimiento actualizado');
+    },
+    onError: (err) => toastError(err, 'No se pudo actualizar el movimiento'),
   });
 }
 
 export function useDeleteTransaction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete<void>(`/transactions/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: qk.transactions.all }),
+    mutationFn: (arg: string | { id: string; householdId?: string }) => {
+      const id = typeof arg === 'string' ? arg : arg.id;
+      const householdId = typeof arg === 'string' ? undefined : arg.householdId;
+      const qs = householdId ? `?householdId=${householdId}` : '';
+      return api.delete<void>(`/transactions/${id}${qs}`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: qk.transactions.all });
+      qc.invalidateQueries({ queryKey: qk.categories.all });
+      toast.success('Movimiento borrado');
+    },
+    onError: (err) => toastError(err, 'No se pudo borrar el movimiento'),
   });
 }

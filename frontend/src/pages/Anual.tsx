@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn';
 export function Anual() {
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
-  const { data = [], isLoading } = useYearlySummary(year, 'ARS');
+  const { data = [], isLoading } = useYearlySummary(year);
 
   const totalIncome = data.reduce((a, m) => a + m.totalIncome, 0);
   const totalExpense = data.reduce((a, m) => a + m.totalExpense, 0);

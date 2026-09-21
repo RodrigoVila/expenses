@@ -2,6 +2,15 @@ import { Transaction, type ITransaction, type TransactionType, type Currency } f
 import { Category } from '../models/Category';
 import { HttpError } from '../middleware/errorHandler';
 import { monthRange } from '../utils/dateRange';
+import { scopeFilter } from '../utils/scope';
+import {
+  decryptField,
+  decryptNumber,
+  decryptOptNumber,
+  encryptField,
+  encryptNumber,
+  encryptOptNumber,
+} from '../utils/crypto';
 import { Types } from 'mongoose';
 
 export interface ListFilters {
@@ -10,6 +19,8 @@ export interface ListFilters {
   type?: TransactionType;
   categoryId?: string;
   currency?: Currency;
+  /** Si está seteado, filtra por hogar; sino es scope personal. */
+  householdId?: string | null;
 }
 
 export interface CreateTransactionInput {
@@ -19,7 +30,12 @@ export interface CreateTransactionInput {
   description?: string;
   date: Date;
   currency?: Currency;
+  arsAmount: number;
+  exchangeRate?: number | null;
+  rateSource?: string | null;
   recurringId?: string | null;
+  /** Si viene, el movimiento se asocia al hogar. Sino es personal. */
+  householdId?: string | null;
 }
 
 export interface UpdateTransactionInput {
@@ -29,14 +45,18 @@ export interface UpdateTransactionInput {
   description?: string;
   date?: Date;
   currency?: Currency;
+  arsAmount?: number;
+  exchangeRate?: number | null;
+  rateSource?: string | null;
 }
 
 export interface MonthSummary {
   totalExpense: number;
   totalIncome: number;
   balance: number;
-  currency: Currency;
   count: number;
+  usdExpense: number;
+  usdIncome: number;
 }
 
 export interface CategoryDelta {
@@ -61,7 +81,6 @@ export interface YearlyMonth {
   totalExpense: number;
   totalIncome: number;
   balance: number;
-  currency: Currency;
 }
 
 export interface CategoryBreakdownItem {
@@ -78,9 +97,36 @@ async function assertCategoryExists(userId: string, categoryId: string): Promise
   if (!exists) throw new HttpError(400, 'categoryId no existe');
 }
 
+/**
+ * Desencripta un doc raw de Transaction a la shape ITransaction (con números
+ * y strings planos). El categoryId puede venir populado (objeto) o como ObjectId.
+ */
+function toApi(doc: Record<string, unknown>): ITransaction {
+  return {
+    ...doc,
+    amount: decryptNumber(doc.amount),
+    description: decryptField(doc.description),
+    arsAmount: decryptNumber(doc.arsAmount),
+    exchangeRate: decryptOptNumber(doc.exchangeRate),
+  } as unknown as ITransaction;
+}
+
+/**
+ * Para queries que populan categoryId: la categoría viene con monthlyBudget
+ * encriptado. Lo desencriptamos para no exponer ciphertext al frontend.
+ */
+function decryptPopulatedCategory<T extends Record<string, unknown>>(doc: T): T {
+  const cat = doc.categoryId as Record<string, unknown> | undefined;
+  if (cat && typeof cat === 'object' && 'monthlyBudget' in cat) {
+    (cat as Record<string, unknown>).monthlyBudget =
+      decryptOptNumber(cat.monthlyBudget) ?? 0;
+  }
+  return doc;
+}
+
 export const transactionService = {
   async list(userId: string, filters: ListFilters): Promise<ITransaction[]> {
-    const query: Record<string, unknown> = { userId };
+    const query: Record<string, unknown> = scopeFilter(userId, filters.householdId);
     if (filters.year && filters.month) {
       const { start, end } = monthRange(filters.year, filters.month);
       query.date = { $gte: start, $lt: end };
@@ -89,57 +135,83 @@ export const transactionService = {
     if (filters.categoryId) query.categoryId = filters.categoryId;
     if (filters.currency) query.currency = filters.currency;
 
-    return Transaction.find(query).sort({ date: -1, createdAt: -1 }).populate('categoryId');
+    const docs = await Transaction.find(query)
+      .sort({ date: -1, createdAt: -1 })
+      .populate('categoryId')
+      .lean();
+    return docs.map((d) =>
+      toApi(decryptPopulatedCategory(d as Record<string, unknown>))
+    );
   },
 
-  async getById(userId: string, id: string): Promise<ITransaction> {
-    const tx = await Transaction.findOne({ _id: id, userId }).populate('categoryId');
-    if (!tx) throw new HttpError(404, 'Movimiento no encontrado');
-    return tx;
+  async getById(
+    userId: string,
+    id: string,
+    householdId?: string | null
+  ): Promise<ITransaction> {
+    const doc = await Transaction.findOne({ _id: id, ...scopeFilter(userId, householdId) })
+      .populate('categoryId')
+      .lean();
+    if (!doc) throw new HttpError(404, 'Movimiento no encontrado');
+    return toApi(decryptPopulatedCategory(doc as Record<string, unknown>));
   },
 
   async create(userId: string, input: CreateTransactionInput): Promise<ITransaction> {
+    // Nota: en scope personal la categoría debe ser del usuario; en scope hogar
+    // la validamos también contra el userId del creador (cada usuario usa sus
+    // propias categorías, incluso cuando el movimiento va al hogar).
     await assertCategoryExists(userId, input.categoryId);
-    return Transaction.create({
-      ...input,
+    const payload = {
       userId,
-      recurringId: input.recurringId ?? null,
+      householdId: input.householdId ?? null,
+      type: input.type,
+      categoryId: input.categoryId,
+      date: input.date,
       currency: input.currency ?? 'ARS',
-    });
+      recurringId: input.recurringId ?? null,
+      rateSource: input.rateSource ?? null,
+      amount: encryptNumber(input.amount),
+      arsAmount: encryptNumber(input.arsAmount),
+      description: encryptField(input.description ?? ''),
+      exchangeRate: encryptOptNumber(input.exchangeRate ?? null),
+    };
+    const doc = await Transaction.create(payload);
+    return toApi(doc.toObject());
   },
 
-  async update(userId: string, id: string, input: UpdateTransactionInput): Promise<ITransaction> {
+  async update(
+    userId: string,
+    id: string,
+    input: UpdateTransactionInput,
+    householdId?: string | null
+  ): Promise<ITransaction> {
     if (input.categoryId) await assertCategoryExists(userId, input.categoryId);
-    const tx = await Transaction.findOneAndUpdate({ _id: id, userId }, input, {
-      new: true,
-      runValidators: true,
-    });
-    if (!tx) throw new HttpError(404, 'Movimiento no encontrado');
-    return tx;
+    const doc = await Transaction.findOne({ _id: id, ...scopeFilter(userId, householdId) });
+    if (!doc) throw new HttpError(404, 'Movimiento no encontrado');
+    if (input.type !== undefined) doc.type = input.type;
+    if (input.categoryId !== undefined) doc.categoryId = new Types.ObjectId(input.categoryId);
+    if (input.date !== undefined) doc.date = input.date;
+    if (input.currency !== undefined) doc.currency = input.currency;
+    if (input.rateSource !== undefined) doc.rateSource = input.rateSource;
+    if (input.amount !== undefined) doc.amount = encryptNumber(input.amount);
+    if (input.arsAmount !== undefined) doc.arsAmount = encryptNumber(input.arsAmount);
+    if (input.description !== undefined) doc.description = encryptField(input.description);
+    if (input.exchangeRate !== undefined)
+      doc.exchangeRate = encryptOptNumber(input.exchangeRate);
+    await doc.save();
+    return toApi(doc.toObject());
   },
 
-  async remove(userId: string, id: string): Promise<void> {
-    const result = await Transaction.findOneAndDelete({ _id: id, userId });
+  async remove(userId: string, id: string, householdId?: string | null): Promise<void> {
+    const result = await Transaction.findOneAndDelete({
+      _id: id,
+      ...scopeFilter(userId, householdId),
+    });
     if (!result) throw new HttpError(404, 'Movimiento no encontrado');
   },
 
   async exportCSV(userId: string, filters: ListFilters = {}): Promise<string> {
-    const query: Record<string, unknown> = { userId };
-    if (filters.year && filters.month) {
-      const { start, end } = monthRange(filters.year, filters.month);
-      query.date = { $gte: start, $lt: end };
-    } else if (filters.year) {
-      const start = new Date(Date.UTC(filters.year, 0, 1));
-      const end = new Date(Date.UTC(filters.year + 1, 0, 1));
-      query.date = { $gte: start, $lt: end };
-    }
-    if (filters.type) query.type = filters.type;
-    if (filters.categoryId) query.categoryId = filters.categoryId;
-    if (filters.currency) query.currency = filters.currency;
-
-    const txs = await Transaction.find(query)
-      .sort({ date: -1 })
-      .populate<{ categoryId: { name: string } }>('categoryId', 'name');
+    const items = await this.list(userId, filters);
 
     const escape = (v: unknown): string => {
       const s = v == null ? '' : String(v);
@@ -150,9 +222,9 @@ export const transactionService = {
     };
 
     const rows: string[] = [
-      ['Fecha', 'Tipo', 'Categoría', 'Descripción', 'Monto', 'Moneda', 'Fijo'].join(','),
+      ['Fecha', 'Tipo', 'Categoría', 'Descripción', 'Monto', 'Moneda', 'ARS equivalente', 'Fijo'].join(','),
     ];
-    for (const tx of txs) {
+    for (const tx of items) {
       const cat = tx.categoryId as unknown as { name?: string } | string;
       const catName = typeof cat === 'string' ? '' : cat?.name ?? '';
       rows.push(
@@ -163,6 +235,7 @@ export const transactionService = {
           tx.description,
           tx.amount,
           tx.currency,
+          tx.arsAmount,
           tx.recurringId ? 'Sí' : 'No',
         ]
           .map(escape)
@@ -176,8 +249,11 @@ export const transactionService = {
     const since = new Date();
     since.setDate(since.getDate() - 60);
 
+    // Categorías recientes considera solo movimientos personales del user
+    // (para acelerar quick-add, no queremos mezclar categorías del hogar).
     const match: Record<string, unknown> = {
       userId: new Types.ObjectId(userId),
+      householdId: null,
       date: { $gte: since },
     };
     if (type) match.type = type;
@@ -191,92 +267,98 @@ export const transactionService = {
     return rows.map((r) => r._id.toString());
   },
 
+  /**
+   * Descripciones recientes. Se hace in-memory porque las descripciones están
+   * encriptadas y no se puede agrupar en Mongo. Cap a 500 tx recientes.
+   */
   async getRecentDescriptions(userId: string, type?: TransactionType, limit = 20): Promise<string[]> {
-    const match: Record<string, unknown> = {
-      userId: new Types.ObjectId(userId),
-      description: { $ne: '' },
-    };
-    if (type) match.type = type;
+    const filter: Record<string, unknown> = { userId, householdId: null };
+    if (type) filter.type = type;
 
-    const rows = await Transaction.aggregate<{ _id: string; count: number; last: Date }>([
-      { $match: match },
-      {
-        $group: {
-          _id: '$description',
-          count: { $sum: 1 },
-          last: { $max: '$date' },
-        },
-      },
-      { $sort: { count: -1, last: -1 } },
-      { $limit: limit },
-    ]);
-    return rows.map((r) => r._id);
-  },
+    const docs = await Transaction.find(filter)
+      .sort({ date: -1 })
+      .limit(500)
+      .select('description date')
+      .lean();
 
-  async getMonthSummary(userId: string, year: number, month: number): Promise<MonthSummary[]> {
-    const { start, end } = monthRange(year, month);
-
-    const result = await Transaction.aggregate<{
-      _id: { currency: Currency; type: TransactionType };
-      total: number;
-      count: number;
-    }>([
-      { $match: { userId: new Types.ObjectId(userId), date: { $gte: start, $lt: end } } },
-      {
-        $group: {
-          _id: { currency: '$currency', type: '$type' },
-          total: { $sum: '$amount' },
-          count: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const byCurrency = new Map<Currency, MonthSummary>();
-    for (const row of result) {
-      const currency = row._id.currency;
-      const summary = byCurrency.get(currency) ?? {
-        totalExpense: 0,
-        totalIncome: 0,
-        balance: 0,
-        currency,
-        count: 0,
-      };
-      if (row._id.type === 'expense') summary.totalExpense += row.total;
-      else summary.totalIncome += row.total;
-      summary.count += row.count;
-      byCurrency.set(currency, summary);
+    const stats = new Map<string, { count: number; last: Date }>();
+    for (const d of docs) {
+      const desc = decryptField((d as Record<string, unknown>).description).trim();
+      if (!desc) continue;
+      const existing = stats.get(desc);
+      const date = (d as Record<string, unknown>).date as Date;
+      if (existing) {
+        existing.count += 1;
+        if (date > existing.last) existing.last = date;
+      } else {
+        stats.set(desc, { count: 1, last: date });
+      }
     }
 
-    return Array.from(byCurrency.values()).map((s) => ({
-      ...s,
-      balance: s.totalIncome - s.totalExpense,
-    }));
+    return Array.from(stats.entries())
+      .sort((a, b) => b[1].count - a[1].count || b[1].last.getTime() - a[1].last.getTime())
+      .slice(0, limit)
+      .map(([desc]) => desc);
+  },
+
+  /**
+   * Summary del mes. Refactoreado a in-memory porque arsAmount está encriptado.
+   */
+  async getMonthSummary(
+    userId: string,
+    year: number,
+    month: number,
+    householdId?: string | null
+  ): Promise<MonthSummary> {
+    const { start, end } = monthRange(year, month);
+
+    const docs = await Transaction.find({
+      ...scopeFilter(userId, householdId),
+      date: { $gte: start, $lt: end },
+    })
+      .select('amount arsAmount type currency')
+      .lean();
+
+    const summary: MonthSummary = {
+      totalExpense: 0,
+      totalIncome: 0,
+      balance: 0,
+      count: 0,
+      usdExpense: 0,
+      usdIncome: 0,
+    };
+    for (const d of docs) {
+      const r = d as Record<string, unknown>;
+      const arsAmount = decryptNumber(r.arsAmount);
+      const originalAmount = decryptNumber(r.amount);
+      const isExpense = r.type === 'expense';
+      const isUsd = r.currency === 'USD';
+      if (isExpense) summary.totalExpense += arsAmount;
+      else summary.totalIncome += arsAmount;
+      summary.count += 1;
+      if (isUsd) {
+        if (isExpense) summary.usdExpense += originalAmount;
+        else summary.usdIncome += originalAmount;
+      }
+    }
+    summary.balance = summary.totalIncome - summary.totalExpense;
+    return summary;
   },
 
   async getSummaryComparison(
     userId: string,
     year: number,
     month: number,
-    currency: Currency = 'ARS'
+    householdId?: string | null
   ): Promise<SummaryComparison> {
     const prev = month === 1 ? { y: year - 1, m: 12 } : { y: year, m: month - 1 };
 
-    const [currentAll, previousAll, currentByCat, previousByCat] = await Promise.all([
-      this.getMonthSummary(userId, year, month),
-      this.getMonthSummary(userId, prev.y, prev.m),
-      this.getCategoryBreakdown(userId, year, month, 'expense', currency),
-      this.getCategoryBreakdown(userId, prev.y, prev.m, 'expense', currency),
+    const [current, previous, currentByCat, previousByCat] = await Promise.all([
+      this.getMonthSummary(userId, year, month, householdId),
+      this.getMonthSummary(userId, prev.y, prev.m, householdId),
+      this.getCategoryBreakdown(userId, year, month, 'expense', householdId),
+      this.getCategoryBreakdown(userId, prev.y, prev.m, 'expense', householdId),
     ]);
-
-    const emptySummary: MonthSummary = {
-      totalExpense: 0,
-      totalIncome: 0,
-      balance: 0,
-      currency,
-      count: 0,
-    };
-    const current = currentAll.find((s) => s.currency === currency) ?? emptySummary;
-    const previous = previousAll.find((s) => s.currency === currency) ?? emptySummary;
 
     const catMap = new Map<string, CategoryDelta>();
     for (const c of currentByCat) {
@@ -320,31 +402,33 @@ export const transactionService = {
     };
   },
 
-  async getYearlySummary(userId: string, year: number, currency: Currency = 'ARS'): Promise<YearlyMonth[]> {
+  async getYearlySummary(
+    userId: string,
+    year: number,
+    householdId?: string | null
+  ): Promise<YearlyMonth[]> {
     const start = new Date(Date.UTC(year, 0, 1));
     const end = new Date(Date.UTC(year + 1, 0, 1));
 
-    const rows = await Transaction.aggregate<{
-      _id: { month: number; type: TransactionType };
-      total: number;
-    }>([
-      { $match: { userId: new Types.ObjectId(userId), date: { $gte: start, $lt: end }, currency } },
-      {
-        $group: {
-          _id: { month: { $month: '$date' }, type: '$type' },
-          total: { $sum: '$amount' },
-        },
-      },
-    ]);
+    const docs = await Transaction.find({
+      ...scopeFilter(userId, householdId),
+      date: { $gte: start, $lt: end },
+    })
+      .select('arsAmount type date')
+      .lean();
 
     const byMonth = new Map<number, YearlyMonth>();
     for (let m = 1; m <= 12; m++) {
-      byMonth.set(m, { month: m, totalExpense: 0, totalIncome: 0, balance: 0, currency });
+      byMonth.set(m, { month: m, totalExpense: 0, totalIncome: 0, balance: 0 });
     }
-    for (const row of rows) {
-      const entry = byMonth.get(row._id.month)!;
-      if (row._id.type === 'expense') entry.totalExpense += row.total;
-      else entry.totalIncome += row.total;
+    for (const d of docs) {
+      const r = d as Record<string, unknown>;
+      const date = r.date as Date;
+      const month = date.getUTCMonth() + 1;
+      const entry = byMonth.get(month)!;
+      const arsAmount = decryptNumber(r.arsAmount);
+      if (r.type === 'expense') entry.totalExpense += arsAmount;
+      else entry.totalIncome += arsAmount;
     }
     for (const entry of byMonth.values()) {
       entry.balance = entry.totalIncome - entry.totalExpense;
@@ -357,51 +441,47 @@ export const transactionService = {
     year: number,
     month: number,
     type: TransactionType = 'expense',
-    currency: Currency = 'ARS'
+    householdId?: string | null
   ): Promise<CategoryBreakdownItem[]> {
     const { start, end } = monthRange(year, month);
 
-    const result = await Transaction.aggregate<{
-      _id: Types.ObjectId;
-      total: number;
-      count: number;
-      category: { name: string; icon: string; color: string }[];
-    }>([
-      {
-        $match: {
-          userId: new Types.ObjectId(userId),
-          date: { $gte: start, $lt: end },
-          type,
-          currency,
-        },
-      },
-      {
-        $group: {
-          _id: '$categoryId',
-          total: { $sum: '$amount' },
-          count: { $sum: 1 },
-        },
-      },
-      {
-        $lookup: {
-          from: 'categories',
-          localField: '_id',
-          foreignField: '_id',
-          as: 'category',
-        },
-      },
-      { $sort: { total: -1 } },
-    ]);
+    const docs = await Transaction.find({
+      ...scopeFilter(userId, householdId),
+      date: { $gte: start, $lt: end },
+      type,
+    })
+      .select('arsAmount categoryId')
+      .populate<{ categoryId: { _id: Types.ObjectId; name: string; icon: string; color: string } }>(
+        'categoryId',
+        'name icon color'
+      )
+      .lean();
 
-    return result
-      .filter((r) => r.category.length > 0)
-      .map((r) => ({
-        categoryId: r._id.toString(),
-        categoryName: r.category[0].name,
-        categoryIcon: r.category[0].icon,
-        categoryColor: r.category[0].color,
-        total: r.total,
-        count: r.count,
-      }));
+    const byCat = new Map<string, CategoryBreakdownItem>();
+    for (const d of docs) {
+      const r = d as unknown as {
+        arsAmount: string;
+        categoryId: { _id: Types.ObjectId; name: string; icon: string; color: string } | null;
+      };
+      if (!r.categoryId) continue;
+      const catId = r.categoryId._id.toString();
+      const arsAmount = decryptNumber(r.arsAmount);
+      const existing = byCat.get(catId);
+      if (existing) {
+        existing.total += arsAmount;
+        existing.count += 1;
+      } else {
+        byCat.set(catId, {
+          categoryId: catId,
+          categoryName: r.categoryId.name,
+          categoryIcon: r.categoryId.icon,
+          categoryColor: r.categoryId.color,
+          total: arsAmount,
+          count: 1,
+        });
+      }
+    }
+
+    return Array.from(byCat.values()).sort((a, b) => b.total - a.total);
   },
 };

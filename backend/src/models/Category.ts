@@ -17,7 +17,7 @@ export interface ICategory extends Document {
   updatedAt: Date;
 }
 
-const categorySchema = new Schema<ICategory>(
+const categorySchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     name: { type: String, required: true, trim: true, maxlength: 50 },
@@ -29,7 +29,7 @@ const categorySchema = new Schema<ICategory>(
       required: true,
       default: 'expense',
     },
-    monthlyBudget: { type: Number, default: 0, min: 0 },
+    monthlyBudget: { type: String, default: null }, // encrypted number | null (0 = no budget)
     isDefault: { type: Boolean, default: false },
     isArchived: { type: Boolean, default: false },
   },
@@ -38,4 +38,6 @@ const categorySchema = new Schema<ICategory>(
 
 categorySchema.index({ userId: 1, isArchived: 1, type: 1 });
 
-export const Category = model<ICategory>('Category', categorySchema);
+// monthlyBudget se guarda encriptado (String); el interface ICategory
+// lo expone como number después de que el service haga decrypt.
+export const Category = model('Category', categorySchema);

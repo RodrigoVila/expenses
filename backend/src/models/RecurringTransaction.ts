@@ -4,6 +4,7 @@ import type { TransactionType, Currency } from './Transaction';
 export interface IRecurringTransaction extends Document {
   _id: Types.ObjectId;
   userId: Types.ObjectId;
+  householdId: Types.ObjectId | null;
   amount: number;
   type: TransactionType;
   categoryId: Types.ObjectId;
@@ -17,17 +18,18 @@ export interface IRecurringTransaction extends Document {
   updatedAt: Date;
 }
 
-const recurringSchema = new Schema<IRecurringTransaction>(
+const recurringSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-    amount: { type: Number, required: true, min: 0 },
+    householdId: { type: Schema.Types.ObjectId, ref: 'Household', default: null, index: true },
+    amount: { type: String, required: true }, // encrypted number
     type: { type: String, enum: ['expense', 'income'], required: true },
     categoryId: {
       type: Schema.Types.ObjectId,
       ref: 'Category',
       required: true,
     },
-    description: { type: String, trim: true, maxlength: 200, default: '' },
+    description: { type: String, default: '' }, // encrypted string
     dayOfMonth: { type: Number, required: true, min: 1, max: 31 },
     currency: {
       type: String,
@@ -42,7 +44,4 @@ const recurringSchema = new Schema<IRecurringTransaction>(
   { timestamps: true }
 );
 
-export const RecurringTransaction = model<IRecurringTransaction>(
-  'RecurringTransaction',
-  recurringSchema
-);
+export const RecurringTransaction = model('RecurringTransaction', recurringSchema);

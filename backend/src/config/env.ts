@@ -19,6 +19,7 @@ export const env = {
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean),
+  ENCRYPTION_KEY: required('ENCRYPTION_KEY'),
 } as const;
 
 export function isAdminEmail(email: string): boolean {
