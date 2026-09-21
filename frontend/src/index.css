@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+/* Tema base — mobile first, con soporte dark automático */
+@theme {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  background: theme(colors.slate.50);
+  color: theme(colors.slate.900);
+}
+
+@media (prefers-color-scheme: dark) {
+  body {
+    background: theme(colors.slate.950);
+    color: theme(colors.slate.100);
+  }
+}
